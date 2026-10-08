@@ -1,0 +1,2079 @@
+---
+title: "AlcoholData Report: Tidying and Visualisation"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+editor: visual
+---
+
+# Group Project
+
+## 1 Introduction {#introduction}
+
+This report documents the data tidying workflow applied to the `AlcoholData` multi-table data set using the `R` programming language and the `tidyverse` suite. Following the tidy data principles, we systematically imported, explored, and cleaned eight source files to ensure each table possesses a clear case type and valid primary keys. We detail the steps taken to identify and remove duplicates, resolve missing values, and structure tables for analysis and downstream visualisation. All code and procedures were executed in `R` with reproducible scripts, and results are presented using interactive tables for clarity.
+
+This project is a joint effort by Kainan Sun, Maartje Bakker, Wenyuan Yang, and Xiaoya Yang.
+
+## 2 Data Tidying {#data-tidying}
+
+### 2.1 Data Importing
+
+All eight data sets were imported with `read_csv` under `tidyverse` and made use of.
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+#| label: data-importing
+
+# tidyverse for data wrangling; DT for table insertion; htmltools for table aesthetics; DiagrammeR for making table relation figures
+library(tidyverse)
+library(DT)
+library(htmltools)
+library(DiagrammeR)
+
+# Import and rename data sets for clarity
+Comment <- read_csv("AlcoholData/Comment.csv")
+DayData <- read_csv("AlcoholData/DayData.csv")
+Like <- read_csv("AlcoholData/Like.csv")
+Login <- read_csv("AlcoholData/Login.csv")
+Post <- read_csv("AlcoholData/Post.csv")
+PreSurvey <- read_csv("AlcoholData/Presurvey.csv")
+User <- read_csv("AlcoholData/User.csv")
+WeekData <- read_csv("AlcoholData/WeekData.csv")
+```
+
+### 2.2 Principle 1: Each Type of Case Must Have Its Own Tibble
+
+#### 2.2.1 Comment.csv
+
+The type of case in this data set is an individual comment made by a user on a post at a certain time, defined by a compound primary key (`PostID`, `CommenterID`, `CommentTime`). We assessed whether there were duplicate rows for the same comment event, and also whether attributes such as `CommentContent` vary within the same case (i.e., for the same `PostID`, `CommenterID`, `CommentTime`).
+
+Principle 1 was not violated in this data set as all variables belong to the same type of case.
+
+```{r results='hide'}
+# Type of case check
+Comment |> 
+  group_by(PostID, CommentTime, CommenterID) |> 
+  summarise(n_distinct = n_distinct(CommentContent), .groups = "drop") |> 
+  count(n_distinct)
+```
+
+```{r}
+# Check for primary key and duplicates
+Comment_dupes <- Comment |>
+  count(PostID, CommenterID, CommentTime) |>
+  filter(n > 1)
+
+# View duplicate comments
+Comment |> semi_join(Comment_dupes, by = c("PostID", "CommenterID", "CommentTime"))
+```
+
+After checking for duplicates, we checked for missing values in the primary key columns. Rows with missing keys cannot be reliably identified or linked across tables, and should be addressed during data cleaning.
+
+```{r results='hide'}
+# Check for missing values in primary key columns
+Comment |> 
+  filter(is.na(PostID) | is.na(CommenterID) | is.na(CommentTime))
+```
+
+As no missing value showed up, we proceeded without removals.
+
+To ensure that each comment event appears only once, we removed duplicates and retain all available information for the first occurrence using `.keep_all = TRUE` in `distinct()`. This preserves additional columns associated with each comment, which may be required elsewhere in analysis.
+
+```{r}
+# Retain all columns from the first occurrence to preserve extra information for each unique comment event.
+Comment_tidy <- Comment |>
+  distinct(PostID, CommenterID, CommentTime, .keep_all = TRUE)
+```
+
+Each row is now an individual comment action (by a commenter, on a post, at a time).
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(Comment_tidy)
+)
+```
+
+#### 2.2.2 DayData.csv
+
+To investigate whether principle 1 was violated in `DayData`, it is necessary to explore the data set. This data set shows the occurrence, frequency, and sociality of alcohol use, sports, and snacking for each person per day. It also indicated how the person felt on that day. The primary key of the data set is `UserID`\*`day_nr`, as shown in the code below. All variables in `DayData` describe characteristics of the person per day. Therefore, `DayData` does not violate principle 1. It is also not necessary to split `DayData` into separate tibbles.
+
+For checking the primary key, we first looked at how many people were in `DayData`. At first glance, the primary key was `UserID`\*`day_nr`. We found that there are multiple rows per person per day, with at least 207 instances where this occurs.
+
+```{r}
+
+DayData_tidy <- DayData
+
+#check how many rows in the DayData.
+nrow(DayData_tidy)
+#so now we know there are 10019 rows in the DayData. 
+
+#check how many persons are included in the DayData.
+DayData_tidy |> 
+  count(UserID)
+#based on this we can say there are 282 persons in the DayData (nrows = 282)
+
+#finding out primary key
+DayData_tidy|> 
+  count(UserID, day_nr,) |> 
+  filter(n > 1) 
+#here we found that there are multiple rows per person per day. 
+
+#check how many multiple rows per person per day are in the data set.
+DayData_tidy|> 
+  count(UserID, day_nr,) |>  
+  filter(n > 1) |> 
+  nrow()
+#there are 207 days per person that have multiple rows.
+
+```
+
+Next, we identified the number duplicates by creating a temporary dataframe specifically for them. To gain further insight into the differences per row, we followed the steps from the tutorial using `n_identical`. This showed that there are indeed multiple rows per person per day, for example two rows for person 106 on day 11.
+
+```{r}
+#making a seperate datatibble with only the dupliactes.
+duplicates <- DayData_tidy |> 
+  count(UserID, day_nr) |> 
+  filter(n > 1)
+
+print(duplicates)
+
+#this makes sense, because in the dataframe 'duplicaties' there are as well 207 rows.
+
+#doing the same but then how it's done in the tutorial.
+DayData_tidy |>
+  group_by(UserID, day_nr) |> 
+  mutate(n_identical = n()) |> 
+  filter(n_identical > 1) |>
+  arrange( UserID, day_nr)|> 
+  ungroup() |>
+  slice(1:2)
+
+#here we found out there are multiple rows per person per day, and the reason why differs (some drunk more over time or some stopped to early).
+
+```
+
+The data showed that the rows were duplicated for day and person, because some respondents did not finish the questionnaire on their first attempt and later filled it in again.
+
+To correct this, the incomplete questionnaires were excluded. Another check was carried out to be sure all unfinished rows were deleted, and since all of these rows were completed, this step proved to be effective. After removing the unfinished entries, there were still 133 rows for the same day per person.
+
+```{r}
+
+#we can not use the persons who haven't finished the questionnaire. So we delete them from the data set.
+DayData_tidy <- DayData_tidy |>
+  filter(Finished == 1)
+
+#recheck how many multiple rows per person per day are in the data set.
+DayData_tidy|> 
+  count(UserID, day_nr,) |>  
+  filter(n > 1) |> 
+  nrow()
+#there are 133 days per person that have multiple rows. This means they have multiple rows per person per day. 
+
+#check example for differences per row.
+DayData_tidy |>
+  group_by(UserID, day_nr) |>
+  mutate(n_identical = n()) |> 
+  filter(n_identical > 1) |>
+  arrange( UserID, day_nr)|> 
+  ungroup() |>
+  slice(1:2)
+#this works and they all finished. The differences here are in the other variables (columns).
+
+```
+
+Next, we examined how the remaining duplicate rows differed from one another. It turned out that some respondents completed the questionnaire multiple times in a single day, but at different times. For example, four hours after the first entry, they might have reported more alcohol consumption or additional snacks. To address this, we chose to keep the most recent row and remove the earlier one(s).
+
+```{r}
+
+#now there are still some multiple rows per person per day. We'll pick only the most recent ones.
+DayData_tidy <- DayData_tidy |>
+  mutate(datum = as.Date(EndDate)) |>   
+  group_by(UserID, datum) |>             
+  arrange(desc(EndDate)) |>               
+  slice(1) |>                         
+  ungroup()                  
+
+#I accidentally wrote date in dutch. So here i redo it.
+DayData_tidy <- DayData_tidy |>
+  rename(Date = datum)
+
+```
+
+In this step, the invalid values, for example the values containing text, were also and deleted.
+
+```{r}
+
+#some values have text in it. check it out.
+  unique(DayData_tidy$Snack_Freq)
+#around 17 of these answers. As this question does not appear in our group's individual research questions, we have decided to leave it as it is for now. 
+  
+#but first, some people typed something in the values (e.g. 3 glazen, of 3 uur). First we have to make these to characters. 
+DayData_tidy <- DayData_tidy |>  
+  mutate(
+    Alc_Occ = as.character(Alc_Occ),
+    Alc_Freq = as.character(Alc_Freq),
+    Alc_Soc = as.character(Alc_Soc),
+    Sport_Occ = as.character(Sport_Occ),
+    Sport_Freq = as.character(Sport_Freq),
+    Sport_Soc = as.character(Sport_Soc),
+    Snack_Occ = as.character(Snack_Occ),
+    Snack_Freq = as.character(Snack_Freq),
+    Snack_Soc = as.character(Snack_Soc)
+)
+                  
+#change those so that only the numbers will be used. 
+DayData_tidy <- DayData_tidy |> 
+  mutate(across(Alc_Occ:Snack_Freq, ~ ifelse(grepl("[0-9]", .), ., NA))) |> #the two values with only text are now NA.
+  mutate(across(Alc_Occ:Snack_Freq, parse_number))
+  # the values with no number in it are now NAs.
+  #parse_number already makes these values from characters to numbers again.
+                  
+```
+
+Next, we checked again how many duplicate rows remained based on `UserID` and `day_nr`.
+
+```{r}
+
+#check how many multiple rows per person per day are in the data set.
+DayData_tidy|> 
+  count(UserID, day_nr) |>  
+  filter(n > 1) |> 
+  nrow()
+#now there are still 44 doubles.
+
+#checking out how the rows differ from each other.
+DayData_tidy |>
+  group_by(UserID, day_nr) |>
+  mutate(n_identical = n()) |> 
+  filter(n_identical > 1) |>
+  arrange( UserID, day_nr)|> 
+  ungroup() |>
+  slice(1:6)
+#now we see that some people also have filled in the same day per person on different days. 
+
+```
+
+After keeping the most recent row per person per day, there were still 44 duplicate rows left. We examined how these rows differed from one another. It turned out that some respondents had entered data for the same day, but had actually completed the questionnaire on different dates. To ensure that the most recent entry was used in these cases as well, we relied not on the newly created `date` variable but on `EndDate`.
+
+```{r}
+
+#to fix that, we'll not use the new variable date to filter the most recent one, but the enddate.
+DayData_tidy <- DayData_tidy |>
+  mutate(EndDate = as.POSIXct(EndDate)) |>
+  group_by(UserID, day_nr) |>
+  arrange(desc(EndDate)) |>
+  slice(1) |>
+  ungroup()
+
+#check again how many multiple rows per person per day are in the data set.
+DayData_tidy |> 
+  count(UserID, day_nr) |>  
+  filter(n > 1) |> 
+  nrow()
+#the result is 0. The primary key is UserID * day_nr.
+
+```
+
+In the final check, it turned out that there are 0 rows for `UserID`\*`day_nr`, so we can assume that the primary key of the Day Data set is `UserID`\*`day_nr`. As a final step, a filter was used to check whether the `UserID` and `day_nr` contained missing values. This was not the case for `day_nr`, but it was for `UserID`. There were 30 such cases.
+
+```{r}
+
+#check for missing values for day_nr
+DayData_tidy |> 
+  filter(is.na(day_nr)) |> 
+  print(n = Inf)
+
+#check for missing values for UserID
+DayData_tidy |> 
+  filter(is.na(UserID)) |> 
+  print(n = Inf)
+```
+
+```{r}
+
+#removing the rows with NA in the UserID.
+DayData_tidy <- DayData_tidy |> 
+  filter(!is.na(UserID))
+
+#recheck for missing values for UserID.
+DayData_tidy |> 
+  filter(is.na(UserID)) |> 
+  print(n = Inf)
+#this results in 0 rows, so mission completed.
+
+```
+
+#### 2.2.3 Like.csv
+
+The type of case in `Like.csv` is a unique like event, defined by (`PostID`, `LikerID`). It does not violate principle 1 as well, we checked for duplicate and missing values in (`PostID`, `LikerID`) pairs to ensure data set clarity.
+
+```{r}
+# Check for duplicates
+Like_dupes <- Like |>
+  count(PostID, LikerID) |>
+  filter(n > 1)
+
+# View duplicate likers
+Like |> semi_join(Like_dupes, by = c("PostID", "LikerID"))
+```
+
+No missing values were detected. We removed any duplicate rows so each row corresponds to a unique like event.
+
+```{r results='hide'}
+# Check for missing values in primary key columns
+Like |> 
+  filter(is.na(PostID) | is.na(LikerID))
+
+# .keep_all ensures other information is preserved.
+Like_tidy <- Like |>
+  distinct(PostID, LikerID, .keep_all = TRUE)
+```
+
+Each row now is a unique user liking a post.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(Like_tidy,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+#### 2.2.4 Login.csv
+
+In this data set, the case type is a login event, defined by `UserID` and `User_LoginTime`. Principle 1 was not violated here, but we checked for duplicate login events per user and missing values to prevent analytic errors.
+
+```{r}
+# Check for duplicates
+Login_dupes <- Login |>
+  count(UserID, User_LoginTime) |>
+  filter(n > 1)
+
+# Check for missing values in primary key columns
+Login |> 
+  filter(is.na(UserID) | is.na(User_LoginTime))
+```
+
+No duplicated rows or missing values were found. Each row is a single login event, representing a login by a user at a specific time.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(Login,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+#### 2.2.5 Post.csv
+
+We checked for the possible type of cases in `Post.csv`. `ViewerID` was found not belong to the type of case of "post" (as it is an attribute of a viewer rather than a post), which means principle 1 was violated.
+
+```{r results='hide'}
+# Check for violation (multiple views per post)
+Post |> 
+  group_by(PostID) |>
+  summarise(n_distinct = n_distinct(ViewerID), .groups = "drop") |>
+  count(n_distinct)
+```
+
+In the missing value check, we found a missing value in the `ViewerID` column. To keep most meaningful information in that observation, we only removed the missing `ViewerID` when creating a new tibble for `PostID`\*`ViewerID`.
+
+```{r results='hide'}
+# Check for missing values in primary key columns
+Post |> 
+  filter(is.na(PostID) | is.na(ViewerID))
+```
+
+The raw data set `Post.csv` was then split into two separate tibbles based on the type of cases. `Post_sub1` included information about each post, `Post_sub2` depicted how each post was viewed by a unique viewer, containing only two variables: `PostID` and `ViewerID`. `distinct()` was used on the primary key `PostID` to remove duplicates. `Post_sub1` was thus reduced to a parsimonious data set of 547 rows from 91031 rows.
+
+```{r results='hide'}
+# Splitting post and view information into 2 separate tibbles
+# Adjust to select post-only variables
+# Each row: one post
+Post_sub1 <- Post |> 
+  select(PostID : SyncTime) |> 
+  distinct(PostID, .keep_all = TRUE) 
+```
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+  Post_sub1,
+  options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+      )
+    )
+  )
+)
+)
+```
+
+```{r results='hide'}
+# View events
+# Each row: one unique (post, viewer) event
+Post_sub2 <- Post |> 
+  select(PostID, ViewerID) |> 
+  filter(!is.na(ViewerID)) |>
+  distinct(PostID, ViewerID, .keep_all = TRUE)
+```
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(head(Post_sub2, 500), options = list(pageLength = 25))
+)
+```
+
+Now for `Post_sub1`, each row is a unique post and its attributes; for `Post_sub2`, each row is a unique view event (a user viewing a post).
+
+#### 2.2.6 Presurvey.csv
+
+According to principle 1, each type of case should have its own tibble. We first check the primary key to see whether different case types can be detected directly from the raw data. In this data set, the primary key `UserID` does not reveal any structural differences, so we rely on inspecting the variables themselves. Based on that, we identify two distinct types of cases: group-member information and user-level information. We therefore split the data set into two tibbles before continuing with the tidying process.
+
+**Check the primary key**
+
+```{r}
+PreSurvey |> 
+  count(UserID) |> 
+  filter(n > 1)
+```
+
+By checking the primary key, we found that `UserID 470` submitted two fully completed but inconsistent `PreSurvey` entries.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+    PreSurvey |> 
+      filter(UserID == 470),
+    options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+**Exclude UserID 470 from the data set**
+
+```{r results='hide'}
+PreSurvey <- PreSurvey |> 
+  filter(UserID != 470)
+```
+
+Since we could not determine which response was valid, and keeping both would double-count this user, we excluded this user from the data set.
+
+**Check the primary key again**
+
+```{r results='hide'}
+PreSurvey |> 
+  count(UserID) |> 
+  filter(n > 1)
+```
+
+After removing the duplicate user, we check the primary key again. Now, each `UserID` appears only once, which shows that `UserID` functions as the primary key for the `PreSurvey` tibble at this stage.
+
+**Check missing values in primary key**
+
+```{r results='hide'}
+PreSurvey |> 
+  filter(is.na(UserID))
+```
+
+This step checks whether any rows have a missing `UserID`. A primary key cannot contain missing values, so this helps confirm that all cases are properly identified before we continue with further tidying.
+
+::: callout-important
+Although checking the primary key in the raw data does not reveal different types of cases, applying principle 2 later will change the row structure through pivoting, which in turn alters the primary key and exposes distinct case types. To keep the workflow cleaner and avoid unnecessary complexity after pivoting, we identify these case types in advance and split the data set before further tidying.
+:::
+
+**Select related columns based on type of case (1)**
+
+```{r results='hide'}
+PreSurvey_sub1 <- PreSurvey |>  select(
+  UserID,
+  starts_with("GroupMember_")
+)
+```
+
+Since the primary key didn’t tell us anything about different case types, we looked directly at the variables themselves. From their structure, we could clearly see that the data set mixes group-member information with user-level information. Based on this distinction, and following principle 1, we separated the group-member variables into `PreSurvey_sub1`.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(PreSurvey_sub1,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+**Select related columns based on type of case (2)**
+
+```{r results='hide'}
+PreSurvey_sub2 <- PreSurvey |> select(
+  !starts_with("GroupMember_")
+)
+```
+
+After separating out the group-member variables, the remaining columns represent user-level information. We collect these into `PreSurvey_sub2`, which forms the user-level tibble for the rest of the tidying steps.
+
+```{r echo=FALSE}
+# Fix UTF-8 issue
+PreSurvey_sub2 <- PreSurvey_sub2 |> 
+  mutate(across(where(is.character), ~iconv(.x, from = "UTF-8", to = "UTF-8", sub = "")))
+
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(PreSurvey_sub2,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+::: callout-note
+Since both resulting tibbles still keep `UserID` as the primary key, we do not repeat the duplicate or missing-value checks here.
+:::
+
+#### 2.2.7 User.csv
+
+**Step 1.** According to the cases type identifying principle: every variable in the primary key and every combination of these variables may represent a different type of case. The primary key for `User` is `UserID`, and the `User` case type could be identified.
+
+```{r results='hide'}
+User |> 
+  count(UserID) |> 
+  filter(n > 1)
+```
+
+But after applying common sense, we found that `Condition` is a characteristic of `Group_nr`. Therefore, our preliminary assumption is `User` table includes two cases types: `User` and `Group`. **Step 2** was to conduct a uniqueness check.
+
+```{r}
+User |>
+  group_by(UserID) |>
+  summarise(across(everything(), ~ n_distinct(.x)), .groups = "drop") |>
+  pivot_longer(
+    cols = -UserID,
+    names_to = "variable",
+    values_to = "n_distinct_per_user"
+  ) |>
+  group_by(variable) |>
+  summarise(
+    max_n_distinct = max(n_distinct_per_user),
+    .groups = "drop"
+  ) |>
+  mutate(
+    is_unique_per_user = max_n_distinct == 1
+  )
+```
+
+```{r}
+User |>
+  group_by(Group_nr) |>
+  summarise(across(everything(), ~ n_distinct(.x)), .groups = "drop") |>
+  pivot_longer(
+    cols = -Group_nr,
+    names_to = "variable",
+    values_to = "n_distinct_per_group"
+  ) |>
+  group_by(variable) |>
+  summarise(
+    max_n_distinct = max(n_distinct_per_group),
+    .groups = "drop"
+  ) |>
+  mutate(
+    is_unique_per_group = max_n_distinct == 1
+  )
+```
+
++-----------+----------------------------------------+-----------------------------------------------------------------------+------------------+
+| Case type | Variables                              | Notes                                                                 | Separate tibble? |
++===========+========================================+=======================================================================+==================+
+| User      | ID_nr_Vragenlijst, Group_nr, Condition | student characteristics mix with relevant group group characteristics | yes              |
++-----------+----------------------------------------+-----------------------------------------------------------------------+------------------+
+| Group     | Condition                              | Fixed group characteristics                                           | yes              |
++-----------+----------------------------------------+-----------------------------------------------------------------------+------------------+
+
+**Step 3.** According to the rule: the variable belongs to the simplest type of cases (identified by fewest variables) satisfying the check in **Step 2**. The primary key for `Person` case type is `UserID` (1 variable), and the primary key for the `Group` case type is `Group_nr` (1 variable). Regarding `Condition`: it is unique with respect to `UserID`, and it is also unique with respect to `Group_nr`. However, based on semantics and domain knowledge, it clearly represented a group-level condition. This attribute can therefore be placed in the smaller `Group_nr` table, avoiding repeated information in `User` table. According to the case-type rules, `Condition` belongs to the `Group` case type, which indicates that the `User` table contains a mixed-in group-level case type. Consequently, a separate "groups" tibble should be created.
+
+Splitting `User` into `User_sub1` and `User_sub2` based on principle 1: `User_sub1` included information of experimental condition, type of fake alcohol posts shown during the last three weeks of the data collection; `User_sub2` included information of `Users` including user ID, questionnaire ID, question group number and role.
+
+```{r results='hide'}
+User_sub1 <- User |> 
+  select(Group_nr, Condition) 
+```
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(User_sub1,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+```{r results='hide'}
+User_sub2 <- User |> 
+  select(UserID, ID_nr_Vragenlijst, Group_nr, UserRole)
+```
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(User_sub2,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+**Check primary key for `User_sub1`**
+
+```{r}
+User_sub1 |> 
+  filter(is.na(Group_nr))
+```
+
+In the initial `Group` table, there was one row with `Group_nr = NA` and `Condition = NA`. Since `Group_nr` is the primary key of the `Group` table, it must not contain missing values. The NA row does not correspond to a real group (it originates from users without group membership), so it was removed from the `Group` table.
+
+**Remove missing value from `User_sub1` table**
+
+```{r}
+User_sub1 <- User_sub1 |> 
+  filter(!is.na(Group_nr))
+```
+
+**Check primary key for `User_sub2` table**
+
+```{r}
+User_sub2 |> 
+  filter(is.na(UserID))
+```
+
+`Group_nr` is a foreign key that links participants to groups. Missing values in `Group_nr` and `ID_nr_Vragenlijst` occur only for `admin` and `special` users, who did not complete the questionnaire and are not assigned to any group. Therefore, these NA values are allowed and are not treated as data errors.
+
+#### 2.2.8 WeekData.csv
+
+Like `DayData`, the `WeekData` contains information per person per day, but aggregated by week. Each week, respondents completed the questionnaire on the same day, so `day_nr` values are identical for each weekly entry. The primary key is `UserID`\*`week_nr`.
+
+The variables in this data set cover the assessment of alcohol through 15 questions, as well as perceptions of the intention to consume alcohol in the upcoming week. Additionally, it includes how often the SNS app was used in the past week and how attentively it was viewed. All these variables / columns therefore refer to the person per week. It is therefore not necessary to split the data set into multiple tibbles, as principle 1 is not violated.
+
+To determine the primary key of the week data set, roughly the same steps were followed as for the day data. First, we looked at how many people were in the data set, which was 270. Then we checked how many days were included in the data set, which was 6, and also how many weeks were included, which was 6 as well. The day numbers were the same for each week: day 8, day 15, day 22, day 29, day 36, and day 43. Since these days are the same for each week number (for example, every week 1 has day number 8), `day_nr` is by reasoning not part of the primary key.
+
+```{r results='hide'}
+
+WeekData_tidy <- WeekData
+
+#check how many persons are included in the WeekData.
+WeekData_tidy |> 
+  count(UserID) |> 
+  nrow()
+# there are 270 rows, so 270 unique persons. 
+
+#check how many days are included in the WeekData.
+WeekData_tidy |> 
+  count(day_nr) |> 
+  nrow()
+#there are 6 rows, so 6 days.
+
+#check how many weeks are included in the WeekData.
+WeekData_tidy |> 
+  count(week_nr) |> 
+  nrow()
+#there are 6 rows, so 6 weeks.
+
+#we want to have an overview of the days and frequency.
+WeekData_tidy |> 
+  count(day_nr)
+# this shows there are 6 days (8, 15, 22, 29, 36, 43), and 200+ rows per day.
+
+#we want to have an overview of the weeks and frequency.
+WeekData_tidy |> 
+  count(week_nr)
+# this shows there are 6 weeks (1,2,3,4,5,6), and 200+ rows per week
+
+#this means the values in the day_nr are the same for every week. 
+
+```
+
+Next, we looked at the number of rows that would remain after counting by `UserID` and `week_nr`. A closer look at the duplicates per person and week revealed, similar to the daily data set, that several respondents had completed the questionnaire more than once for the same week. The differences were also comparable: some entries were initially incomplete and later filled in, or values had changed between submissions. Therefore, we again decided to retain only the completed and most recent rows, excluding the others.
+
+```{r results='hide'}
+
+#to check whether the primary key is week_nr * UserID (since the day_nr is the same for all week_nr per person)
+WeekData_tidy|> 
+  count(UserID, week_nr) |>  
+  filter(n > 1) |> 
+  nrow()
+#results in 26 rows. 
+
+#to see the duplicates as done in the tutorial.
+WeekData_tidy |>
+  group_by(UserID, week_nr) |>
+  mutate(n_identical = n()) |> 
+  filter(n_identical > 1) |>
+  arrange( UserID, week_nr)|> 
+  ungroup() |>
+  slice(1:6)
+#now we see that some people also have filled in the same week per person on different days. 
+
+#we can not use the persons who haven't finished the questionnaire. So we delete them from the data set.
+WeekData_tidy <- WeekData_tidy |>
+  filter(Finished == 1)
+
+#to keep only the most recent rows. 
+WeekData_tidy <- WeekData_tidy |>
+  mutate(EndDate = as.POSIXct(EndDate)) |>
+  group_by(UserID, week_nr) |>
+  arrange(desc(EndDate)) |>
+  slice(1) |>
+  ungroup()
+
+#check again the number of multiple rows per week per person
+WeekData_tidy|> 
+  count(UserID, week_nr) |> 
+  filter(n > 1) |> 
+  nrow()
+#results in 0 rows. 
+```
+
+After this was carried out, the check for the primary key returned 0 rows, which means we can conclude that the primary key for the Week Data set is `UserID`\*`week_nr`. Next, we checked whether there were any missing values in the primary keys. For the week data, there were no missing values in the `UserID` and `week_nr`.
+
+```{r results='hide'}
+
+#checking for missing values in primary key. 
+WeekData_tidy |> 
+  filter(is.na(UserID))
+#this results in 0 rows.
+
+#checking for missing values in primary key. 
+WeekData_tidy |> 
+  filter(is.na(week_nr))
+#this results in 0 rows.
+
+```
+
+### 2.3 Principle 2: Each Observation Must Have Its Own Row
+
+#### 2.3.1 Example 1: PreSurvey_sub1
+
+According to principle 2, each observation should appear in its own row. In the `PreSurvey_sub1` tibble, a single row still contained multiple `GroupMember\_` responses from the same user, so several observations were packed together. To address this, we used `pivot_longer()` to pull these member-level variables out into separate rows. After pivoting, each row represents one clear `UserID`\*`Column` observation. We then looked at the new primary key `UserID`\*`Column` to make sure there were no duplicates or missing values.
+
+**Pivot GroupMember\_ columns to long format**
+
+```{r results='hide'}
+PreSurvey_sub1 <- PreSurvey_sub1 |>
+  pivot_longer(
+    cols = -UserID,
+    names_to  = "Column",
+    values_to = "Value"
+  )
+```
+
+This step reshapes all `GroupMember\_` variables into a long format. Each original column is turned into a row so that every member-level response is listed separately rather than being packed inside a single wide row.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+    head(PreSurvey_sub1, 50), options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+      )
+    )
+  )
+)
+)
+```
+
+**Check the primary key**
+
+```{r results='hide'}
+PreSurvey_sub1 |> 
+  count(UserID, Column) |> 
+  filter(n > 1)
+```
+
+This step checks whether the primary key `UserID`\*`Column` appears more than once after pivoting. Since these two fields together form the new primary key in the long table, this check helps confirm that the reshaped tibble does not contain duplicate observations.
+
+**Check missing values in primary key**
+
+```{r results='hide'}
+PreSurvey_sub1 |>
+  filter(is.na(UserID) | is.na(Column))
+```
+
+This step checks whether any `UserID`\*`Column` keys are missing, ensuring that every long-format row is a valid observation.
+
+#### 2.3.2 Example 2: DayData (Exploration)
+
+For principle 2, that each observation must have its own row, `DayData` is not in violation. The repeated information, for example the values in `day_nr`, is necessary and dependent on the `UserID`. There are no columns that are actually values.
+
+::: callout-note
+This is a brief exploratory analysis that was ultimately not used, but which does show how we reasoned.
+:::
+
+However, it was briefly explored whether the 9 columns (`Alc_Occ, Alc_Freq, Alc_Soc, Sport_Occ, Sport_Freq, Sport_Soc, Snack_Occ, Snack_Freq, and Snack_Soc`) could be tidied up, since `Occ`, `Freq`, and `Soc` all measure the same concept, only varying by activity. Therefore, the column names were moved into rows using `pivot_longer()` as first step. Because some values in these columns contain text, for example, respondents sometimes added words to their answers (e.g., “3 glasses”), it was first necessary to try converting them into character type. For this exploration, a temporary new data set was created, namely `PersonDayActivity`.
+
+```{r results='hide'}
+#some people typed something in the values (e.g. 3 glazen, of 3 uur). First, we have to make these to characters again. 
+DayData_tidy <- DayData_tidy |>  
+  mutate(
+    Alc_Occ = as.character (Alc_Occ),
+    Alc_Freq = as.character (Alc_Freq),
+    Alc_Soc = as.character (Alc_Soc),
+    Sport_Occ = as.character (Sport_Occ),
+    Sport_Freq = as.character (Sport_Freq),
+    Sport_Soc = as.character (Sport_Soc),
+    Snack_Occ = as.character (Snack_Occ),
+    Snack_Freq = as.character (Snack_Freq),
+    Snack_Soc = as.character (Snack_Soc)
+    )
+                  
+#now they are al characters, we make the columns variables into values of the variable "Activity". 
+PersonDayActivity <- DayData_tidy |>  
+  pivot_longer(
+    cols = c(Alc_Occ, Alc_Freq, Alc_Soc,
+    Sport_Occ, Sport_Freq, Sport_Soc,
+    Snack_Occ, Snack_Freq, Snack_Soc), 
+      names_to = 'Activity', 
+      values_to = 'Value')
+                 
+```
+
+At this point, the column names were in the rows, as you would do when addressing principle 2. However, it was still necessary to separate the activity from the `Occ`, `Freq`, and `Soc` values. This was done using the function `separate_wider_delim()`.
+
+```{r results='hide'}
+#Separating the activity from the measurement.
+PersonDayActivity <- PersonDayActivity |>  
+  separate_wider_delim(
+  cols = Activity,
+  delim = "_",
+  names = c("Activity", "Measure"))
+```
+
+After that, the `Occ`, `Freq`, and `Soc` values were returned to separate columns.
+
+```{r results='hide'}
+PersonDayActivity <- PersonDayActivity |> 
+  pivot_wider(
+    names_from = Measure, values_from = Value)
+```
+
+This resulted in the following `PersonDayAcitcity` table. Note that an NA always appears in the `Freq` and `Soc` columns when the respondent selected 1 for `Occ` (1 means no alcohol, did not exercise, or did not snack).
+
+```{r echo = FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(PersonDayActivity |> 
+    select(UserID, day_nr, Activity, Occ, Freq, Soc)),
+  options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+```
+
+The problem is that the `Activity` column at this moment contains values that actually represent separate variables or columns. Because of this, this exploration remains only an exploratory step, and we will not use this approach of trying to turn the rows into separate observations in the tidied data set. However, it does show how a potential violation of principle 2 could have been resolved, although this was not actually the case.
+
+Long story short, there is therefore no violation of principle 2. Subsequently, the column values were converted back to numbers.
+
+```{r results='hide'}
+#remake these values from characters to numbers again. 
+DayData_tidy <- DayData_tidy |> 
+  mutate(
+    Alc_Occ = as.numeric(Alc_Occ),
+    Alc_Freq = as.numeric(Alc_Freq),
+    Alc_Soc = as.numeric(Alc_Soc),
+    Sport_Occ = as.numeric(Sport_Occ),
+    Sport_Freq = as.numeric(Sport_Freq),
+    Sport_Soc = as.numeric(Sport_Soc),
+    Snack_Occ = as.numeric(Snack_Occ),
+    Snack_Freq = as.numeric(Snack_Freq),
+    Snack_Soc = as.numeric(Snack_Soc)
+  )
+```
+
+### 2.4 Principle 3: Each Variable Must Have Its Own Column
+
+**Example: PreSurvey_sub1**
+
+According to principle 3, each variable should have its own column. After pivoting to long format, the `PreSurvey_sub1` tibble still mixed different pieces of information: the `Column` column combined both the member index and the variable name, and the `Value` column combined different type of responses. To resolve this, we split the encoded column names into separate components and pivoted the table wider again. After this, each variable has its own column, and the tibble meets the requirement of principle 3.
+
+**Split the encoded column names**
+
+```{r results='hide'}
+PreSurvey_sub1 <- PreSurvey_sub1 |>
+  separate_wider_delim(
+    Column,
+    delim = "_",
+    names = c("Prefix", "Member", "Variable"),
+    too_few = "align_start",
+    too_many = "merge"
+  )
+```
+
+This step splits the combined column names into separate parts. We use `separate_wider_delim()` to split `Column` at each underscore, which gives us three components: the prefix `Prefix`, the member index `Member`, and the variable name `Variable`. This prepares the tibble for the next reshaping step.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+    head(PreSurvey_sub1, 50),
+     options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+**Clean and select variable components**
+
+```{r results='hide'}
+PreSurvey_sub1 <- PreSurvey_sub1 |>
+  mutate(
+    Variable = ifelse(is.na(Variable), "MemberID", Variable),
+    Member   = as.integer(Member)
+  ) |>
+  select(UserID, Member, Variable, Value)
+```
+
+We replace missing variable names with `MemberID` and convert the member index into an integer. Then we keep only the columns needed for the next reshaping step: `UserID`, `Member`, `Variable`, and `Value`.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+    head(PreSurvey_sub1, 50),
+    options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+**Reshape the tibble to wide format**
+
+```{r results='hide'}
+PreSurvey_sub1 <- PreSurvey_sub1 |>
+  pivot_wider(
+    id_cols     = c(UserID, Member),
+    names_from  = Variable,
+    values_from = Value
+  ) |>
+  arrange(UserID, Member)
+```
+
+After cleaning the variable components, we reshape the tibble back into a wide format using `pivot_wider()`. This spreads each variable into its own column, with `UserID` and `Member` defining each observation. Finally, we sort the rows for clarity so the structure aligns with principle 3.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(PreSurvey_sub1,
+            options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+**Check the primary key**
+
+```{r results='hide'}
+PreSurvey_sub1 |> 
+  count(UserID, Member) |> 
+  filter(n > 1)
+```
+
+This checks whether the new primary key `UserID`\*`Member` is unique after reshaping, ensuring that each group-member observation appears only once.
+
+**Check missing values in primary key**
+
+```{r results='hide'}
+PreSurvey_sub1 |> 
+  filter(is.na(UserID) | is.na(Member))
+```
+
+This checks whether any rows in the new tibble are missing either `UserID` or `Member`, since a valid primary key cannot contain NA values.
+
+**Remove empty group-member rows**
+
+```{r results='hide'}
+PreSurvey_sub1 <- PreSurvey_sub1 |>
+  filter(!if_all(-c(UserID, Member), is.na))
+```
+
+These rows contain a valid `UserID` and `Member` index but no actual data for any group-member variables. Since they do not represent meaningful observations, we remove them before continuing.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+    head(PreSurvey_sub1, 50),
+    options = list(
+    columnDefs = list(
+      list(
+        targets = "_all",
+        render = JS("
+          function(data) {
+            return data === null ? 'NA' : data;
+          }
+        ")
+        )
+      )
+    )
+  )
+)
+```
+
+### 2.5 Principle 4: Each Value Must Have Its Own Cell
+
+#### 2.5.1 Example 1: PreSurvey_sub2
+
+According to principle 4, each cell should contain only one value. In the `PreSurvey_sub2` tibble, the variable `Alc_Freq_Normal` stored both a numeric code and a descriptive label in the same cell, which mixes two pieces of information. To fix this, we separated the numeric part from the text label and converted the code into an integer. After this step, each cell holds only a single value, and the variable structure follows principle 4.
+
+**Separate code and label in Alc_Freq_Normal**
+
+```{r results='hide'}
+PreSurvey_sub2 <- PreSurvey_sub2 |> 
+  separate_wider_delim(
+    Alc_Freq_Normal,
+    delim = ". ",
+    names = c("AlcFreq_code", "AlcFreq_label"),
+    too_few = "align_start"
+  ) 
+```
+
+This step splits the `Alc_Freq_Normal` column into two fields: the numeric code and the text label. We use `separate_wider_delim()` to detect the “`.`” delimiter and pull the two parts apart, so that each cell contains only one piece of information as required by principle 4.
+
+```{r echo=FALSE}
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(
+    head(PreSurvey_sub2, 50) |> 
+      select(UserID, AlcFreq_code, AlcFreq_label, everything())
+    )
+  )
+```
+
+**Convert the frequency code to an integer**
+
+```{r results='hide'}
+PreSurvey_sub2 <- PreSurvey_sub2 |> 
+  mutate(
+    AlcFreq_code = as.integer(AlcFreq_code)
+  )
+```
+
+This converts the extracted code into a numeric value so it can be used properly in later analyses.
+
+**Check the primary key**
+
+```{r results='hide'}
+PreSurvey_sub2 |> 
+  count(UserID) |> 
+  filter(n > 1)
+```
+
+This check looks for any duplicated `UserID` values in `PreSurvey_sub2`. The filtered result is empty, which means no user appears more than once. In other words, `UserID` remains a valid and unique primary key for this tibble.
+
+**Check missing values in primary key**
+
+```{r results='hide'}
+PreSurvey_sub2 |>
+  filter(is.na(UserID))
+```
+
+This step checks whether any rows in `PreSurvey_sub2` have a missing `UserID`. Since no rows are returned, we confirm that the primary key is fully observed with no missing values.
+
+#### 2.5.2 Example 2: User_sub1
+
+After checking the variables in `User_sub1`, we found that `Condition` contains more than one piece of information, which violated principle 4. Therefore, we split the variable `Condition` into 2 variables: `Valence` and `Sociality` based on principle 4.
+
+```{r echo=FALSE}
+User_sub1 <- User_sub1 |>  separate_wider_delim(
+    Condition,
+    delim = "/",
+    names = c("Valence", "Sociality")
+  )
+htmltools::div(
+  style = "zoom: 0.8;",
+  datatable(User_sub1)
+)
+```
+
+## 3 Table Contents and Relation
+
+### 3.1 Primary Key
+
+To confirm each table has a valid primary key, we check that every key value combination uniquely identifies each row. Code below counts rows per putative key and filters for duplicates. Absence of output for these checks means the primary key is properly defined for the tibble.
+
+**Comment_tidy**
+
+```{r}
+# Check that each (PostID, CommentTime, CommenterID) triple is unique in Comment_tidy
+Comment_tidy |> 
+  count(PostID, CommentTime, CommenterID) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**DayData_tidy**
+
+```{r}
+# Check uniqueness of each (UserID, day_nr) pair in DayData_tidy
+DayData_tidy |> 
+  count(UserID, day_nr) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**Like_tidy**
+
+```{r}
+# Check uniqueness of each (PostID, LikerID) pair in Like_tidy
+Like_tidy |> 
+  count(PostID, LikerID) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**Login**
+
+```{r}
+# Check uniqueness of each (UserID, User_LoginTime) pair in Login
+Login |> 
+  count(UserID, User_LoginTime) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**Post_sub1**
+
+```{r}
+# Check uniqueness of PostID in Post_sub1
+Post_sub1 |> 
+  count(PostID) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**Post_sub2**
+
+```{r}
+# Check uniqueness of (PostID, ViewerID) pair in Post_sub2
+Post_sub2 |> 
+  count(PostID, ViewerID) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**PreSurvey_sub1**
+
+```{r}
+# Check uniqueness of (UserID, Member) pair in PreSurvey_sub1
+PreSurvey_sub1 |> 
+  count(UserID, Member) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**PreSurvey_sub2**
+
+```{r}
+# Check uniqueness of UserID in PreSurvey_sub2
+PreSurvey_sub2 |> 
+  count(UserID) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**User_sub1**
+
+```{r}
+# Check uniqueness of Group_nr in User_sub1
+User_sub1 |> 
+  count(Group_nr) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**User_sub2**
+
+```{r}
+# Check uniqueness of UserID in User_sub2
+User_sub2 |> 
+  count(UserID) |> 
+  filter(n > 1)
+```
+
+------------------------------------------------------------------------
+
+**WeekData_tidy**
+
+```{r}
+# Check uniqueness of (UserID, week_nr) pair in WeekData_tidy
+WeekData_tidy |> 
+  count(UserID, week_nr) |> 
+  filter(n > 1)
+```
+
+All tidied tables were confirmed to have well-defined primary keys if no output was generated for these checks (i.e., no duplicate key sets).
+
+### 3.2 Check for Foreign Key by Detecting Shared Columns
+
+For each candidate foreign key, we verified referential integrity: every foreign key value should exist in its referenced table. This is done using `anti_join()`, which returns unmatched values (i.e., potential data integrity violations). Where relevant, a mapping between the key names is specified.
+
+#### 3.2.1 Post-related Foreign Keys
+
+```{r}
+# Ensure all PostID values in Comment_tidy have a corresponding PostID in Post_sub1
+Comment_tidy |> anti_join(Post_sub1, by = "PostID")
+
+# Ensure all PostID values in Like_tidy have a corresponding PostID in Post_sub1
+Like_tidy |> anti_join(Post_sub1, by = "PostID" )
+
+# Ensure all PostID values in Post_sub2 have a corresponding PostID in Post_sub1
+Post_sub2 |>
+  anti_join(Post_sub1, by = "PostID")
+```
+
+These `anti_join()` results are empty, which means every post-related foreign key is valid (i.e., all post references in `Comment_tidy`, `Like_tidy`, and `Post_sub2` tables exist in the master post table).
+
+#### 3.2.2 User-related Foreign Keys
+
+```{r}
+# Ensure all CommenterID in Comment_tidy correspond to a UserID in User_sub2
+Comment_tidy |>
+  anti_join(User_sub2, by = c("CommenterID" = "UserID"))
+
+# Ensure all LikerID in Like_tidy correspond to a UserID in User_sub2
+Like_tidy |>
+  anti_join(User_sub2, by = c("LikerID" = "UserID"))
+
+# Ensure all ViewerID in Post_sub2 correspond to a UserID in User_sub2
+Post_sub2 |>
+  anti_join(User_sub2, by = c("ViewerID" = "UserID"))
+
+# Ensure all UserID in Login correspond to a UserID in User_sub2
+Login |>
+  anti_join(User_sub2, by = "UserID")
+
+# Ensure all UserID in PreSurvey_sub1 and PreSurvey_sub2 correspond to UserID in User_sub2
+PreSurvey_sub1 |> anti_join(User_sub2, by = "UserID" )
+PreSurvey_sub2 |> anti_join(User_sub2, by = "UserID" )
+
+# Ensure all UserID in DayData_tidy correspond to UserID in User_sub2
+DayData_tidy |> anti_join(User_sub2, by = "UserID")
+
+# Ensure all UserID in WeekData_tidy correspond to UserID in User_sub2
+WeekData_tidy |>
+  anti_join(User_sub2, by = "UserID")
+```
+
+The empty output for each `anti_join()` check means every foreign user reference is valid (i.e., all relevant tables only reference existing users).
+
+#### 3.2.3 Group-membership-related Foreign Key
+
+All group membership assignments in `User_sub2` map to existing groups in `User_sub1`.
+
+```{r}
+User_sub2 |>
+  filter(!is.na(Group_nr)) |> 
+  anti_join(User_sub1, by = "Group_nr")
+```
+
+Table relation is shown in the following table.
+
++-------------------+----------------------------------+--------------------+--------------+
+| Table             | Primary Key                      | Foreign Key        | Join Table   |
++===================+==================================+====================+==============+
+| Comment_tidy      | PostID, CommenterID, CommentTime | PostID\            | Post_sub1\   |
+|                   |                                  | CommenterID=UserID | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| DayData_tidy      | UserID, day_nr                   | UserID             | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| Like_tidy         | PostID, LikerID                  | PostID\            | Post_sub1\   |
+|                   |                                  | LikerID=UserID     | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| Login             | UserID, User_LoginTime           | UserID             | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| Post_sub1         | PostID                           | NA                 | NA           |
++-------------------+----------------------------------+--------------------+--------------+
+| Post_sub2         | PostID, ViewerID                 | PostID\            | Post_sub1\   |
+|                   |                                  | ViewerID=UserID    | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| PreSurvey_sub1    | UserID, Member                   | UserID             | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| PreSurvey_sub2    | UserID                           | UserID             | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+| User_sub1 (Group) | Group_nr                         | NA                 | NA           |
++-------------------+----------------------------------+--------------------+--------------+
+| User_sub2 (User)  | UserID                           | Group_nr           | User_sub1    |
++-------------------+----------------------------------+--------------------+--------------+
+| WeekData_tidy     | UserID, week_nr                  | UserID             | User_sub2    |
++-------------------+----------------------------------+--------------------+--------------+
+
+::: callout-note
+1.  The `Post_sub1` table contains a unique row per post and is identified by the primary key `PostID`. Since this table does not reference any other entity, it does not contain foreign keys.
+
+    Instead, `PostID` functions as a referenced primary key: it is used as a foreign key in other tables (e.g., `Like` or `Comments`) to link each like or comment to the specific post it refers to.
+
+2.  `User_sub1` contains a unique row per experimental group and is identified by the primary key `Group_nr`. Since this table does not reference any other entity, it does not contain foreign keys.
+
+    Instead, `Group_nr` functions as a referenced primary key: it is used as a foreign key in the `Users` table to link each participant to the group they were assigned to.
+:::
+
+### 3.3 Example: Joining Five Tibbles
+
+Since the full data set contains many tibbles, showing all of them in one diagram would quickly become unreadable. So we selected five tibbles that cover the main types of relationships in our data. We chose `Post_sub1` as the center, because most other data sets connect to posts in some way. Then we added `Like_tidy` and `Comment_tidy` to show two different interactions with posts. We also included `User_sub2` and `PreSurvey_sub2` so we could show how user-level information links into the network.
+
+```{r echo=FALSE}
+library(DiagrammeR)
+
+DiagrammeR::grViz("
+digraph alcohol_db {
+  graph [rankdir = LR]
+
+  node [
+    shape = plaintext
+    fontname = 'Helvetica'
+  ]
+
+  # Table definitions
+  Post_sub1 [label=<
+  <TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>
+    <TR><TD BGCOLOR='black'><FONT COLOR='white'>Post_sub1</FONT></TD></TR>
+    <TR><TD PORT='PostID'><U>PostID</U></TD></TR>
+    <TR><TD>Fakepost</TD></TR>
+    <TR><TD>Alcoholpost</TD></TR>
+    <TR><TD>Alcoholpost_fake</TD></TR>
+    <TR><TD>Alcoholpost_valence</TD></TR>
+    <TR><TD>Alcoholpost_social</TD></TR>
+    <TR><TD>......</TD></TR>
+  </TABLE>>];
+
+  Comment_tidy [label=<
+  <TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>
+    <TR><TD BGCOLOR='black'><FONT COLOR='white'>Comment_tidy</FONT></TD></TR>
+    <TR><TD PORT='PostID'><U>PostID</U></TD></TR>
+    <TR><TD PORT='CommenterID'><U>CommenterID</U></TD></TR>
+    <TR><TD><U>CommentTime</U></TD></TR>
+    <TR><TD>CommentContent</TD></TR>
+  </TABLE>>];
+
+  Like_tidy [label=<
+  <TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>
+    <TR><TD BGCOLOR='black'><FONT COLOR='white'>Like_tidy</FONT></TD></TR>
+    <TR><TD PORT='PostID'><U>PostID</U></TD></TR>
+    <TR><TD PORT='LikerID'><U>LikerID</U></TD></TR>
+  </TABLE>>];
+
+  User_sub2 [label=<
+  <TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>
+    <TR><TD BGCOLOR='black'><FONT COLOR='white'>User_sub2</FONT></TD></TR>
+    <TR><TD PORT='UserID'><U>UserID</U></TD></TR>
+    <TR><TD>Group_nr</TD></TR>
+    <TR><TD>QuestionnaireID</TD></TR>
+    <TR><TD>UserRole</TD></TR>
+  </TABLE>>];
+
+  PreSurvey_sub2 [label=<
+  <TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>
+    <TR><TD BGCOLOR='black'><FONT COLOR='white'>PreSurvey_sub2</FONT></TD></TR>
+    <TR><TD PORT='UserID'><U>UserID</U></TD></TR>
+    <TR><TD>Reward</TD></TR>
+    <TR><TD>Android</TD></TR>
+    <TR><TD>Age</TD></TR>
+    <TR><TD>Gender</TD></TR>
+    <TR><TD>......</TD></TR>
+  </TABLE>>];
+
+  # Edges: joins / relations
+  Post_sub1:PostID -> Comment_tidy:PostID;
+  Post_sub1:PostID -> Like_tidy:PostID;
+  User_sub2:UserID -> Comment_tidy:CommenterID;
+  User_sub2:UserID -> Like_tidy:LikerID;
+  User_sub2:UserID -> PreSurvey_sub2:UserID;
+}
+")
+```
+
+## 4 Data Joins
+
+### 4.1 Table Joining
+
+Upon summarising the relationships among tables in the `AlcoholData` data set, we demonstrated how we use data join functions to explore connections between users, posts, comments, likes, views, and survey records. For each join, we identify the type of relationship (one-to-one, one-to-many) and indicate the largest number of linked records per entity.
+
+#### 4.1.1 Group and User Mapping
+
+```{r warning=FALSE}
+left_join(User_sub1, User_sub2, by = "Group_nr") |>
+  count(Group_nr) |> 
+  summarise(max_n = max(n))
+```
+
+After joining `User_sub1` (Group table) with `User_sub2` (User table) by `Group_nr`, the largest number of users per group is 20. Each `Group_nr` in `User_sub1` corresponds to multiple rows in `User_sub2`.
+
+**Relationship:** one-to-many (`Group` → `User`)
+
+------------------------------------------------------------------------
+
+#### 4.1.2 User and Login Events
+
+```{r}
+left_join(Login, User_sub2, by = "UserID") |>
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `Login` (login records) by `UserID` shows that the largest number of login records associated with a single user is 158. This means at least one user appears 158 times in the joined table:
+
+-   Each `UserID` in `User_sub2` corresponds to multiple rows in `Login`,
+-   i.e., a single user has many login events.
+
+**Relationship:** one-to-many (`User` → `Login`)
+
+------------------------------------------------------------------------
+
+#### 4.1.3 Posts and Comments
+
+```{r}
+left_join(Post_sub1, Comment_tidy, by = "PostID") |>
+  count(PostID) |> 
+  summarise(max_n = max(n))
+```
+
+After joining `Post_sub1` (Post table) with `Comment_tidy` (Comment table) by `PostID`, the largest number of comment records associated with a single post is 10, indicating:
+
+-   Each `PostID` in `Post_sub1` corresponds to multiple rows in `Comment_tidy`,
+-   i.e., a single post can have many comments.
+
+**Relationship:** one-to-many (`Post` → `Comment`)
+
+------------------------------------------------------------------------
+
+#### 4.1.4 Users Writing Comments
+
+```{r}
+left_join(User_sub2, Comment_tidy, by = c("UserID" = "CommenterID")) |>
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `Comment_tidy` (Comment table) by matching `UserID` with `CommenterID`, the largest number of comments written by a single user is 34. Thus:
+
+-   Each `UserID` in `User_sub2` corresponds to multiple rows in `Comment_tidy`,
+-   A single user can write many comments.
+
+**Relationship:** one-to-many (`User` → `Comment`)
+
+------------------------------------------------------------------------
+
+#### 4.1.5 Users and Daily Records
+
+```{r}
+left_join(User_sub2, DayData_tidy, by = "UserID") |> 
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `DayData_tidy` (Daily data table) by `UserID`, the largest number of daily records associated with a single user is 66:
+
+-   Each `UserID` in `User_sub2` maps to multiple rows in `DayData_tidy`,
+-   A single user can have many daily records.
+
+**Relationship:** one-to-many (`User` → `DayData`)
+
+------------------------------------------------------------------------
+
+#### 4.1.6 Posts and Likes
+
+```{r}
+left_join(Post_sub1, Like_tidy, by = "PostID") |> 
+  count(PostID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `Post_sub1` (Post table) with `Like_tidy` (Like table) by `PostID`, the largest number of likes for a single post is 122, meaning:
+
+-   A single post can receive many likes.
+
+**Relationship:** one-to-many (`Post` → `Like`)
+
+------------------------------------------------------------------------
+
+#### 4.1.7 Users Giving Likes
+
+```{r}
+left_join(User_sub2, Like_tidy, by = c("UserID" = "LikerID")) |> 
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `Like_tidy` (Like table) by matching `UserID` with `LikerID`, the largest number of likes given by a single user is 196, so a single user can give many likes.
+
+**Relationship:** one-to-many (`User` → `Like`)
+
+------------------------------------------------------------------------
+
+#### 4.1.8 Posts and Views
+
+```{r}
+left_join(Post_sub1, Post_sub2, by = "PostID") |> 
+  count(PostID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `Post_sub1` (Post table) with `Post_sub2` (View table) by `PostID`, the relationship is one-to-many, as each post can be viewed many times.
+
+**Relationship:** one-to-many (`Post` → `View`)
+
+------------------------------------------------------------------------
+
+#### 4.1.9 Users Viewing Posts
+
+```{r}
+left_join(User_sub2, Post_sub2, by = c("UserID" = "ViewerID")) |> 
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `Post_sub2` (View table) by matching `UserID` with `ViewerID`, the largest number of views made by a single user is 487, which represents a single user can view many posts.
+
+**Relationship:** one-to-many (`User` → `View`)
+
+------------------------------------------------------------------------
+
+#### 4.1.10 Users and Friend Nominations
+
+```{r}
+left_join(User_sub2, PreSurvey_sub1, by = "UserID") |>
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `PreSurvey_sub1` (Friend nomination table) by `UserID`, the largest number of nominated friends associated with a single user is 20, which represents a single user can nominate many members.
+
+**Relationship:** one-to-many (`User` → `Friend Nomination`)
+
+------------------------------------------------------------------------
+
+#### 4.1.11 Users and Survey Records (Wide Format)
+
+```{r}
+left_join(User_sub2, PreSurvey_sub2, by = "UserID") |>
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `PreSurvey_sub2` (One-row-per-user survey) by `UserID`, each user appears at most once, which means each user maps to one survey record.
+
+**Relationship:** one-to-one (`User` ↔ `Survey (Wide)`)
+
+------------------------------------------------------------------------
+
+#### 4.1.12 Users and Weekly Data
+
+```{r}
+left_join(User_sub2, WeekData, by = "UserID") |> 
+  count(UserID) |> 
+  summarise(max_n = max(n))
+```
+
+Joining `User_sub2` (User table) with `WeekData` by `UserID`, each user appears multiple times if there are multiple weeks, which means single user can have many weekly records.
+
+**Relationship:** one-to-many (`User` → `WeekData`)
+
+### 4.2 Conceptual Overview for Visualisations
+
+Below, we provide a conceptual overview of how tables are combined to answer individual research questions in our group.
+
+#### 4.2.1 Individual Research Questions
+
+-   Wenyuan: Does seeing alcohol posts from friends influence how often students drink alone vs. socially?
+
+-   Kainan: How do descriptive norms relate to alcohol use among students, and does this relationship depend on group closeness?
+
+-   Maartje: To what extent does seeing positive or negative valenced posts about alcohol affect the daily frequency of alcohol consumption, and to what extent is this effect moderated or amplified by personality traits (Big Five) and loneliness?
+
+-   Xiaoya: Does students’ daily alcohol consumption change after exposure to researcher-generated posts with different valence (positive vs. negative) and social context (social vs. non-social), and is this effect moderated by students’ relationship closeness within their group?
+
+#### 4.2.2 Conceptual Overview
+
+**Step 1 Build a user–group background dataset**\
+Build a user–group background data set (used by all RQs, especially Kainan and Xiaoya).\
+We start from `User_sub2` as the main participant table. Then we join `User_sub1` by `Group_nr` so each user gets their experimental condition (`Valence`, `Sociality`). Next, we join `PreSurvey_sub2` by `UserID`, adding the user-level baseline measures such as personality traits, loneliness, and alcohol-related beliefs.\
+After these joins, we get a user-level data set where each row is one participant with their group, condition, and individual characteristics. This background table is used in:\
+- Kainan’s RQ (descriptive norms and group closeness as predictors/moderators)\
+- Maartje’s RQ (personality and loneliness as moderators)\
+- Xiaoya’s RQ (group closeness + group condition)
+
+If we need detailed group-member ratings (e.g., pairwise closeness within groups), we conceptually join `PreSurvey_sub1` by `UserID` (and reshape by `Member` if needed) to build group-level closeness indicators.
+
+**Step 2** **Add daily and weekly alcohol consumption**\
+Add daily and weekly alcohol consumption (used by Wenyuan, Maartje, Xiaoya, and Kainan).\
+For daily-level analyses, we join `DayData_tidy` to the user–group table by `UserID`. This produces a user-day panel where each row includes drinking behaviour, drinking context, and all user/group variables from Step 1.\
+For weekly analyses (e.g., Kainan’s descriptive norms across weeks), we instead join `WeekData_tidy` to the user–group data set by `UserID`, producing a user-week panel.
+
+**Step 3 Construct exposure to posts**\
+We start from `Post_sub2`, where each row is a view event (a `ViewerID` saw a `PostID`).\
+We then join:\
+- `User_sub2` on `ViewerID` = `UserID`, attaching the viewer’s profile,\
+- `Post_sub1` on `PostID`, attaching post attributes such as alcohol-relatedness, valence, social context, and whether the post is researcher-generated.
+
+If we want to include engagement rather than only exposure, we conceptually extend this by joining:\
+- `Like_tidy` on (`PostID`, `UserID`/`LikerID`),\
+- `Comment_tidy` on (`PostID`, `UserID`/`CommenterID`).
+
+These joins allow us to count likes and comments or mark which viewed posts were actively engaged with. The resulting exposure data set can then be aggregated per day or week (e.g., number of positive/social alcohol posts viewed per day).
+
+**Step 4 Link exposure to drinking outcomes over time**\
+Link exposure to drinking outcomes over time (directly addresses Wenyuan, Maartje, and Xiaoya).\
+We align the exposure data (Step 3) with `DayData_tidy` (Step 2).\
+First, we aggregate exposure per `UserID` and `day_nr`, such as the number of positive vs. negative or social vs. non-social posts viewed each day.\
+Then we join this aggregated exposure table to the user-day panel by `UserID` and day variables.
+
+This combined data set allows:\
+- Wenyuan’s RQ: testing whether exposure to positive/social alcohol posts predicts higher consumption or changes in social vs. solo drinking.\
+- Maartje’s RQ: testing whether daily exposure predicts daily drinking frequency, and whether personality traits or loneliness moderate this effect.\
+- Xiaoya’s RQ: testing the impact of researcher-generated posts with different valence/social context on next-day drinking, and whether this depends on group closeness or group condition.
+
+**Step 5 Include descriptive norms and group closeness**\
+Descriptive norms and closeness come from the pre-survey tables.\
+- `PreSurvey_sub2` provides user-level norms.\
+- `PreSurvey_sub1` (long format: `UserID` × `Member`) can be summarised within each `Group_nr` to compute group-level closeness or norm indicators.
+
+These indicators can be merged back into either the user-level background set (`User_sub2` + `User_sub1` + `PreSurvey_sub2`) or the user-day/week panels when norms/closeness serve as moderators.
+
+This structure allows:\
+- Kainan to relate descriptive norms and group closeness to alcohol use (daily or weekly).\
+- Xiaoya to test whether group closeness moderates the effects of experimental posts on drinking.
+
+## 5 Description
+
+The scope of the data after cleaning is more organized than the raw data, and the principles that were violated have been resolved. The data sets `Comment.csv`, `DayData.csv`, `Like.csv`, `Login.csv`, and `Weekdata.csv` are now clean, with necessary NA values removed and violations fixed. The table `Post.csv` has been split into `Post_sub1` and `Post_sub2`, just like `PreSurvey`, which has been split into `PreSurvey_sub1` and `PreSurvey_sub2`. Also, `User` has been divided into two tibbles, namely `User_sub1` and `User_sub2`.
+
+Some data sets are related to posts and include `PostID` in the primary key, such as `Comment_tidy`, `Like_tidy`, `Post_sub1`, and `Post_sub2`. The `PostID` refers to the post. In `Like_tidy` and `Comment_tidy`, there is more information about interaction data.
+
+Other data sets are more user-focused and include the variable `UserID` in the primary key, such as `Login`, `PreSurvey_sub1`, `PreSurvey_sub2`, and `User_sub2`. `User_sub1` and `User_sub2` contain information about the users, including `UserID`, `UserRole`, group number, and `Condition`. The `PreSurvey_sub` data sets contain demographic characteristics, such as `Age`, `Gender`, `Education`, `Nationality`, and group-related features. This data set also includes psychological and behavioral measures, such as the Big5 and loneliness items.
+
+Additionally, there is time-sensitive data in `DayData_tidy` and `WeekData_tidy`. In `DayData_tidy`, daily activities are measured, such as alcohol consumption, sports, and snack frequency, while `WeekData_tidy` contains weekly surveys, including attitudes towards alcohol, snacks, and sports, and how often the app was used.
+
+So, in general, we can say that part of the data set is about posts, and the other part is about users. The data comes from 2018 and was collected during the months of March and April.
+
+# Individual Visualisation Project
+
+## 1 Introduction
+
+This analysis investigates behavioural changes among university students over a six-week period, comparing the baseline phase (weeks 1–3) to the experimental phase (weeks 4–6). It provides a broad descriptive overview of shifts across three health behaviours, as well as an analytical focus on alcohol consumption and its relationship with digital engagement and personality traits.
+
+With this research goal, the following research question is proposed:
+
+> How do alcohol consumption, sporting, and snacking change during the experiment (weeks 4-6 versus weeks 1-3), and are these changes associated with participants' social networking service (SNS) app usage intensity and need for popularity (NFP)?
+
+To provide a structured analysis, this inquiry is divided into one descriptive question and two specific hypotheses:
+
+> **RQ1**: What is the distribution of change in alcohol consumption, sporting, and snacking among participants when comparing the experimental phase (weeks 4-6) to the baseline phase (weeks 1-3)?
+
+> **H1**: Participants' social networking service (SNS) app usage intensity is positively associated with changes in alcohol consumption.
+
+> **H2**: The relationship between SNS app usage and alcohol change is moderated by need for popularity (NFP), such that the positive association is stronger for individuals with higher NFP.
+
+## 2 Data Wrangling and Visualisation
+
+### 2.1 Distribution of Behaviour Change
+
+To establish a context for the subsequent analysis, this section examines whether participants exhibited systematic behavioural shifts during the study. This descriptive overview visualises the extent and direction of change across three health behaviours (alcohol consumption, sporting, and snacking) to determine if patterns are specific to alcohol or reflect a general trend in health habits.
+
+For this analysis, "change" is defined as the difference in average frequency between the experimental phase (weeks 4–6) and the baseline phase (weeks 1–3).
+
+@fig-1 displays the distribution of these changes. In the visualisation, the dashed vertical line at zero represents stability (no change). Peaks to the right of this line indicate participants who increased the behaviour, while peaks to the left indicate a decrease. Different measurement units are clearly labelled to each behaviour.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#| fig-cap: ""
+#| label: "fig-1"
+
+# Load data
+df_day <- DayData_tidy
+df_user <- User_sub2
+
+# Create new function to clean frequency variables (converts commas to decimals, extract numbers)
+clean_frequency <- function(x) {
+  x_temp <- gsub(",", ".", x)
+  as.numeric(str_extract(x_temp, "\\d+(\\.\\d+)?"))
+}
+
+# Calculate behaviour changes (based versus experimental phase)
+behaviour_changes <- df_day |> 
+  # Filter to participants only with completed surveys (previously tidied, just in case)
+  semi_join(df_user |> filter(UserRole == "participant"), by = "UserID") |> 
+  filter(Finished == 1) |> 
+  
+  # Define phases: days 1-21 = baseline, days 22-42 = experimental
+  mutate(
+    phase = if_else(day_nr <= 21, "baseline", "experimental"),
+    # Operationalise behaviours: 0 if did not engage, frequency if engaged
+    daily_alcohol = if_else(Alc_Occ == 2, clean_frequency(Alc_Freq), 0),
+    daily_sport = if_else(Sport_Occ == 2, clean_frequency(Sport_Freq), 0),
+    daily_snack = if_else(Snack_Occ == 2, clean_frequency(Snack_Freq), 0)
+  ) |> 
+  replace_na(list(daily_alcohol = 0, daily_sport = 0, daily_snack = 0)) |> 
+  
+  # Calculate average daily frequency per phase per participant
+  group_by(UserID, phase) |> 
+  summarise(
+    avg_alcohol = mean(daily_alcohol, na.rm = TRUE),
+    avg_sport = mean(daily_sport, na.rm = TRUE),
+    avg_snack = mean(daily_snack, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  
+  # Compute change scores (experimental - baseline)
+  pivot_wider(names_from = phase, values_from = c(avg_alcohol, avg_sport, avg_snack)) |> 
+  mutate(
+    alcohol_change = avg_alcohol_experimental - avg_alcohol_baseline,
+    sport_change = avg_sport_experimental - avg_sport_baseline,
+    snack_change = avg_snack_experimental - avg_snack_baseline
+  ) |> 
+  select(UserID, alcohol_change, sport_change, snack_change)
+
+# Reshape to long format for faceted visualisation
+behaviour_changes_long <- behaviour_changes |> 
+  pivot_longer(
+    cols = ends_with("_change"),
+    names_to = "behaviour",
+    values_to = "change"
+  ) |> 
+  mutate(
+    behaviour = case_when(
+      behaviour == "alcohol_change" ~ "Alcohol Consumption",
+      behaviour == "sport_change" ~ "Sporting",
+      behaviour == "snack_change" ~ "Snacking"
+    ),
+    behaviour = factor(behaviour, levels = c("Alcohol Consumption", "Sporting", "Snacking"))
+  )
+  
+# VISUALISATION:
+# Use density plots (geom_density) rather than histograms to smooth the distribution shapes and show comparison across behaviours with different measurement scales
+rq1_plot <- ggplot(behaviour_changes_long, aes(x = change, fill = behaviour)) +
+  
+  # Lower transparency for density curves in case overlapping distributions exist
+  geom_density(alpha = 0.7, colour = "white", linewidth = 0.8) +
+  
+  # Add reference line at zero, dashed to distinguish from data, black for visibility
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "black", linewidth = 1) +
+  
+  # Facet by behaviour with free scales due to different measurement units
+  facet_wrap(~ behaviour, scales = "free", ncol = 1,
+             labeller = labeller(behaviour = c(
+               "Alcohol Consumption" = "Alcohol Consumption (glasses/day)",
+               "Sporting" = "Sporting (minutes/day)",
+               "Snacking" = "Snacking (occasions/day)"
+             ))) +
+
+  # Distinct colours for each behaviour type: orange (alcohol), green (health - sporting), purple (food). Hide legend (facet labels suffice)
+  scale_fill_manual(
+    values = c("Alcohol Consumption" = "#e67e22",
+               "Sporting" = "#2ecc71",
+               "Snacking" = "#9b59b6"),
+    guide = "none"
+    ) +
+  
+  labs(
+    title = "Distribution of Behaviour Change During the Experiment",
+    subtitle = "Comparing Experimental Phase (Weeks 4-6) to Baseline (Weeks 1-3)",
+    x = "Change in Daily Behaviour (Experimental - Baseline)",
+    y = "Density"
+  ) +
+  
+  # Reduce visual clutter to emphasises data, remove minor grid lines for cleaner appearance
+  # Adjust base size and text size to give imgae a good fit to html display, boldness to draw attention, and give gradient to gray to indicate "sub"title
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40"),
+    strip.text = element_text(face = "bold", size = 11),
+    strip.background = element_rect(fill = "gray95", color = NA),
+    panel.grid.minor = element_blank()
+  )
+  
+print(rq1_plot)
+```
+
+### 2.2 Main Effect of SNS App Usage
+
+To test the first hypothesis (H1), this analysis examines the link between digital engagement and behavioural change. Theoretically, higher SNS app usage acts as a proxy for greater exposure to social influence and alcohol-related content. If social learning drives consumption, participants with higher engagement levels should exhibit a greater increase in drinking during the experimental phase.
+
+Self-reported weekly app usage frequency (`Sns_often` in `WeekData_tidy`) was used as the predictor, calculated by averaging across all six weeks to represent the overall engagement levels for each participant.
+
+@fig-2 visualises this relationship using a scatter plot with a linear regression line. The horizontal axis represents the participant's average self-reported app usage frequency (on a scale of 1–9), while the vertical axis displays the change in their daily alcohol consumption. Each point represents one participant, and the red regression line indicates the general trend: contrary to the hypothesised relationship, a negative slope showcases that higher app usage is associated with a greater decrease in drinking.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#| fig-cap: ""
+#| label: "fig-2"
+# Load data
+df_week <- WeekData_tidy
+
+# Calculate alcohol change (from previous analysis of RQ1)
+alcohol_change <- behaviour_changes |> 
+  select(UserID, alcohol_change)
+
+# Calculate average SNS app usage across all weeks
+user_app_usage <- df_week |> 
+  group_by(UserID) |> 
+  summarise(avg_app_usage = mean(Sns_often, na.rm = TRUE), .groups = "drop")
+
+# Merge data sets for H1 analysis
+h1_data <- alcohol_change |> 
+  inner_join(user_app_usage, by = "UserID") |> 
+  drop_na()
+
+# VISUALISATION
+# Scatter plot with regression line
+h1_plot <- ggplot(h1_data, aes(x = avg_app_usage, y = alcohol_change)) +
+  
+  # Reference line at y=0 visually separates those who increased drinking from those who decreased
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "gray40", linewidth = 0.8) +
+  
+  # Use blue to represent SNS app usage (technology-themed), jitter and transparency to increase clarity in case of overlapped plotting
+  geom_jitter(size = 3, alpha = 0.6, colour = "#3491db") +
+  
+  # Add red to the regression line to draw attention and show contrast, also with confidence interval to show strength
+  geom_smooth(method = "lm", se = TRUE, colour = "#e74c3c", fill = "#e74c3c", alpha = 0.2) +
+  
+  labs(
+    title = "Association Between SNS App Use and Alcohol Consumption Change",
+    subtitle = "Does higher app usage predict increased alcohol consumption?",
+    x = "Average SNS App Usage Frequency (1-9 scale)",
+    y = "Change in Alcohol Consumption (glasses/day)",
+    caption = "Baseline = Weeks 1-3; Experimental = Weeks 4-6"
+  ) +
+  
+  # Set minimal theme to increase clarity, remove minor grid lines for cleaner appearance
+    # Adjust base size and text size to give imgae a good fit to html display, boldness to draw attention, and give gradient to gray to indicate "sub"title
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(colour = "gray40"),
+    panel.grid.major = element_blank()
+  )
+
+print(h1_plot)
+```
+
+### 2.3 Moderation by Need for Popularity
+
+The final analysis addresses the second hypothesis (H2) by introducing **need for popularity (NFP)** as a moderator. Theoretically, NFP represents an individual’s susceptibility to peer influence. Even if the general effect of app usage is subtle, individuals with a high desire for social approval are expected to be significantly more responsive to the social cues presented via the app.
+
+To visualise this interaction, participants were categorised into three distinct groups based on their NFP scores: low, medium, and high.
+
+@fig-3 displays the relationship between SNS app usage and alcohol consumption change separately for each NFP level group. This approach reveals both the overall pattern and individual-level deviations within each group.
+
+::: callout-tip
+The key feature to observe is the difference in slopes (the steepness of the lines):
+
+-   **Parallel lines** would suggest that NFP makes no difference.
+-   **Diverging slopes** indicate moderation. Specifically, if the **red line** (high NFP) shows a steep trend while the **blue line** (Low NFP) remains relatively flat, it confirms that the impact of SNS app usage on drinking is amplified by NFP.
+:::
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#| fig-cap: ""
+#| label: "fig-3"
+# Load data
+df_pre <- PreSurvey_sub2
+
+# Calculate NFP scores (average of 7 NFP items)
+user_nfp <- df_pre |> 
+  rowwise() |> 
+  mutate(nfp_score = mean(c_across(starts_with("NFP_")), na.rm = TRUE)) |> 
+  ungroup() |> 
+  select(UserID, nfp_score)
+
+# Merge all variables for moderation analysis
+h2_data <- alcohol_change |> 
+  inner_join(user_app_usage, by = "UserID") |> 
+  inner_join(user_nfp, by = "UserID")  |> 
+  drop_na() |>
+  # Create NFP groups using tertile splits instead of a median split to prevent difference between "high" and "low" being diluted by average participants
+  mutate(
+    nfp_group = case_when(
+      nfp_score <= quantile(nfp_score, 1/3, na.rm = TRUE) ~ "Low",
+      nfp_score <= quantile(nfp_score, 2/3, na.rm = TRUE) ~ "Medium",
+      TRUE ~ "High"
+    ),
+    nfp_group = factor(nfp_group, levels = c("Low", "Medium", "High"))
+  )
+
+# VISUALISATION 
+# Separate regression lines for each NFP group
+h2_plot <- ggplot(h2_data, aes(x = avg_app_usage, y = alcohol_change, color = nfp_group)) +
+  # Reference line at y=0 visually separates those who increased drinking from those who decreased.
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", linewidth = 0.8) +
+  
+  # Use jitter, add transparency and smaller size to reduce overlapped plotting with multiple groups
+  geom_jitter(size = 2.5, alpha = 0.5) +
+  
+  # Separate regression lines: reveal moderation through diverging slopes
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1.2) +
+  
+  # Colour gradient by warmth: blue (low susceptibility) to yellow (medium susceptibility) red (high susceptibility)
+  scale_color_manual(
+    values = c("Low" = "#2c7bb6",
+               "Medium" = "#f1c40f",
+               "High" = "#d7191c"),
+    name = "Need for Popularity"
+  ) +
+  
+  labs(
+    title = "Interaction of NFP and SNS App Usage",
+    subtitle = "Do high-NFP individuals show stronger responses to app usage?",
+    x = "Average SNS App Usage Frequency (1-9 scale)",
+    y = "Change in Alcohol Consumption (glasses/day)",
+    caption = "Steeper slopes for high-NFP groups indicate moderation"
+  ) +
+  
+  # Set minimal theme to increase clarity, remove minor grid lines for cleaner appearance
+  # Adjust base size and text size to give imgae a good fit to html display, boldness to draw attention, and give gradient to gray to indicate "sub"title
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40"),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+print(h2_plot)
+```
