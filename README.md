@@ -20,7 +20,7 @@ Individual part (at the end): Visualisations.
 - **Language:** R (Quarto)
 - **Packages:** tidyverse, DT, htmltools, DiagrammeR
 
-## 4. Invisible Language — `invisible language/` (the parental project see [this link]([url](https://github.com/invisibleinfo/invisibleinfo.github.io)))
+## 4.[ Invisible Language]([url](https://github.com/invisibleinfo/invisibleinfo.github.io)) — `invisible language/`
 Evaluation of how well LLMs handle text in low-resource languages and scripts.
 - `T1_copy_back_v1.ipynb`: copy-back experiment. LLMs are prompted (zero-shot, via an OpenAI-compatible API) to reproduce GlotLID texts exactly, scored with character error rate (CER), followed by error category analysis.
   - **Language:** Python (Jupyter Notebook)
