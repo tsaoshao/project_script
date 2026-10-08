@@ -1,4 +1,4 @@
-# Portfolio – Wenyuan Yang
+# Examples – Wenyuan Yang
 
 A selection of data analysis projects from my studies in Communication Science.
 
