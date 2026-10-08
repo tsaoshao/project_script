@@ -1,0 +1,624 @@
+---
+title: "MiSS Descriptive Statistics"
+output:
+  html_notebook:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+## 0. Data Wragling and Inspection
+
+```{r}
+library(tidyverse)
+
+df_summary <- read_csv("summary.csv")
+
+df_languages <- read_tsv("Table_of_Languages.tab")
+
+head(df_summary)
+head(df_languages)
+```
+
+```{r}
+df_summary %>%
+  group_by(model) %>%
+  summarise(n_lang = n_distinct(lang))
+```
+
+```{r}
+df_summary <- df_summary %>%
+  separate(lang, into = c("ISO_639", "Script"), sep = "_", remove = TRUE)
+
+head(df_summary)
+```
+
+```{r}
+df_merged <- df_summary %>%
+  left_join(df_languages, by = "ISO_639")
+
+head(df_merged)
+```
+
+```{r}
+# Define the hierarchical order of EGIDS levels
+egids_levels <- c("Institutional", "Developing", "Vigorous", "In_Trouble", "Dying", "Extinct")
+
+# Create the categorical variable and convert it to an ordered factor
+df_merged <- df_merged %>%
+  mutate(
+    # Map 0/1 binary indicator flags to corresponding string labels
+    EGIDS_level = case_when(
+      Institutional == 1 ~ "Institutional", # EGIDS level from 0 to 4
+      Developing == 1    ~ "Developing",    # EGIDS level = 5
+      Vigorous == 1      ~ "Vigorous",      # EGIDS level = 6a
+      In_Trouble == 1    ~ "In_Trouble",    # EGIDS level = 6b or 7
+      Dying == 1         ~ "Dying",         # EGIDS level = 8a to 9
+      Extinct == 1       ~ "Extinct",       # EGIDS level = 10
+      TRUE               ~ NA_character_
+    ),
+    # Convert EGIDS_level to an ordered factor using the pre-defined levels
+    EGIDS_level = factor(EGIDS_level, levels = egids_levels, ordered = TRUE)
+  )
+
+# Verify the creation and inspect frequency counts (including any NAs)
+table(df_merged$EGIDS_level, useNA = "ifany")
+```
+
+```{r}
+sum(is.na(df_merged$EGIDS)) # equals to the NAs in the table above
+```
+
+```{r}
+dls_levels <- c("Still", "Emerging", "Ascending", "Vital","Thriving")
+
+df_merged <- df_merged %>%
+  mutate(Dls_Level = factor(Dls_Level, levels = dls_levels, ordered = TRUE))
+
+# Verify the underlying order structure and inspect level counts
+levels(df_merged$Dls_Level)
+table(df_merged$Dls_Level, useNA = "ifany")
+```
+
+## 0.5 [Option] Filter only Mistral Small 3.2
+
+```{r}
+# make the following codes into comment if you want to analyze all models instead of only Mistral Small 3.2
+df_merged <- df_merged %>%
+  filter(model == "mistral-small-3.2")
+```
+
+## 1. Overall Statistics
+
+```{r}
+overall_stats <- df_merged %>%
+  summarise(
+    total_records = n(),
+    unique_languages = n_distinct(ISO_639),
+    mean_accuracy = mean(accuracy, na.rm = TRUE),
+    sd_accuracy = sd(accuracy, na.rm = TRUE),
+    median_accuracy = median(accuracy, na.rm = TRUE),
+    iqr_accuracy = IQR(accuracy, na.rm = TRUE),
+    min_accuracy = min(accuracy, na.rm = TRUE),
+    max_accuracy = max(accuracy, na.rm = TRUE)
+  )
+print(overall_stats)
+```
+
+## 2. Accuracy by Model and Task
+
+```{r}
+model_task_stats <- df_merged %>%
+  group_by(model, task) %>%
+  summarise(
+    n_obs = n(),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    sd_acc = sd(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(model, desc(mean_acc))
+print(model_task_stats)
+```
+
+```{r}
+# Reshape to Model x Task Mean Accuracy Matrix
+model_task_matrix <- df_merged %>%
+  group_by(model, task) %>%
+  summarise(mean_acc = mean(accuracy, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = task, 
+    values_from = mean_acc
+  )
+
+print(model_task_matrix)
+```
+
+## 3. Language Vitality Analysis
+
+```{r}
+# Accuracy across different EGIDS levels
+egids_stats <- df_merged %>%
+  group_by(EGIDS_level) %>%
+  summarise(
+    n_languages = n_distinct(ISO_639),
+    n_obs = n(),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    sd_acc = sd(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(egids_stats)
+```
+
+```{r}
+# Accuracy across different EGIDS scores (EGIDS level = 10 = Extinct)
+egids_stats2 <- df_merged %>%
+  group_by(EGIDS) %>%
+  summarise(
+    n_languages = n_distinct(ISO_639),
+    n_obs = n(),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    sd_acc = sd(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(egids_stats2)
+```
+
+## 4. Digital Language Support Aanlysis
+
+```{r}
+# Accuracy across different DLS levels
+dls_stats <- df_merged %>%
+  group_by(Dls_Level) %>%
+  summarise(
+    n_languages = n_distinct(ISO_639),
+    n_obs = n(),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    sd_acc = sd(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(dls_stats)
+```
+
+## 5. Classification (Family & Script) Analysis
+
+```{r}
+# Accuracy by Language Family (filtering for families with >= 5 languages)
+family_stats <- df_merged %>%
+  group_by(Family) %>%
+  summarise(
+    n_languages = n_distinct(ISO_639),
+    n_obs = n(),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(n_languages >= 5) %>%
+  arrange(desc(mean_acc))
+print(family_stats)
+```
+
+```{r}
+script_stats <- df_merged %>%
+  group_by(Script) %>%
+  summarise(
+    n_languages = n_distinct(ISO_639),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_languages))
+print(script_stats)
+```
+
+## 6. Accuracy by L1 speakers
+
+```{r}
+# Speaker counts span multiple orders of magnitude; calculate log10 scale
+df_merged <- df_merged %>%
+  mutate(log10_L1 = log10(L1_Users + 1))
+
+# Spearman & Pearson correlation between L1 speaker counts and accuracy
+l1_correlation <- df_merged %>%
+  filter(!is.na(L1_Users)) %>%
+  summarise(
+    spearman_corr = cor(log10_L1, accuracy, method = "spearman"),
+    pearson_corr = cor(log10_L1, accuracy, method = "pearson")
+  )
+print(l1_correlation)
+
+# Group L1 Users into ordinal bins for tabular presentation
+df_merged <- df_merged %>%
+  mutate(
+    L1_Bin = case_when(
+      L1_Users == 0 ~ "0 (Extinct)",
+      L1_Users < 1e4 ~ "< 10K",
+      L1_Users < 1e6 ~ "10K - 1M",
+      L1_Users < 1e7 ~ "1M - 10M",
+      TRUE ~ "> 10M"
+    ),
+    L1_Bin = factor(L1_Bin, levels = c("0 (Extinct)", "< 10K", "10K - 1M", "1M - 10M", "> 10M"))
+  )
+
+l1_bin_stats <- df_merged %>%
+  group_by(L1_Bin) %>%
+  summarise(
+    n_languages = n_distinct(ISO_639),
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    median_acc = median(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(l1_bin_stats)
+```
+
+## 7. Interaction Analysis (Model x EGIDS_level)
+
+```{r}
+model_egids_interaction <- df_merged %>%
+  group_by(model, EGIDS_level) %>%
+  summarise(
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(names_from = EGIDS_level, values_from = mean_acc)
+print(model_egids_interaction)
+```
+
+## 8. Accuracy by Language x Script x Model
+
+```{r}
+# Calculate mean accuracy for each Language x Script x Model combination
+combo_acc <- df_merged %>%
+  group_by(Language_Name, ISO_639, Script, model) %>%
+  summarise(mean_accuracy = mean(accuracy, na.rm = TRUE), .groups = "drop")
+
+# Top 10 Highest Accuracy Combinations
+top_10 <- combo_acc %>%
+  slice_max(mean_accuracy, n = 10, with_ties = FALSE)
+
+# Bottom 10 Lowest Accuracy Combinations
+bottom_10 <- combo_acc %>%
+  slice_min(mean_accuracy, n = 10, with_ties = FALSE)
+
+print(top_10)
+print(bottom_10)
+```
+
+## 9. A Look into some Major Languages (within one model)
+
+```{r}
+# Define target ISO language codes
+target_langs <- c("eng", "cmn", "fra", "spa")
+
+task_lang_acc <- df_merged %>%
+  # Filter for target model and target languages
+  filter(model == "mistral-small-3.2", ISO_639 %in% target_langs) %>%
+  group_by(task, ISO_639) %>%
+  summarise(
+    mean_accuracy = mean(accuracy, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = ISO_639,
+    values_from = mean_accuracy
+  )
+
+print(task_lang_acc)
+```
+
+## 10. Visulization
+
+```{r}
+library(ggplot2)
+
+egids_model_trend <- df_merged %>%
+  filter(!is.na(EGIDS_level)) %>%
+  group_by(model, EGIDS_level) %>%
+  summarise(mean_acc = mean(accuracy, na.rm = TRUE), .groups = "drop")
+
+ggplot(egids_model_trend, aes(x = EGIDS_level, y = mean_acc, color = model, group = model)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_text(aes(label = sprintf("%.3f", mean_acc)), vjust = -0.8, size = 3.5, show.legend = FALSE) +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_continuous(limits = c(0.4, 1.0), expand = expansion(mult = c(0.05, 0.15))) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 10, face = "bold"),
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  labs(
+    title = "Model Performance Trajectory Across EGIDS Levels",
+    subtitle = "Interaction analysis: Model vs Language Vitality Level",
+    x = "EGIDS Level",
+    y = "Mean Accuracy",
+    color = "Model"
+  )
+```
+
+```{r}
+
+# Heatmap: Model vs Task Mean Accuracy
+ggplot(model_task_stats, aes(x = task, y = model, fill = mean_acc)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = sprintf("%.2f", mean_acc)), color = "black", size = 3.5, fontface = "bold") +
+  scale_fill_gradient2(low = "#d73027", mid = "#fee08b", high = "#1a9850", midpoint = 0.7, name = "Mean Acc") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 10),
+    panel.grid = element_blank(),
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  labs(
+    title = "Model Accuracy Across LLM Tasks",
+    x = "Task",
+    y = "Model"
+  )
+```
+
+```{r}
+# Filter scripts with >= 2 languages
+script_plot_data <- script_stats %>%
+  filter(n_languages >= 2) %>%
+  mutate(Script = reorder(Script, mean_acc))
+
+ggplot(script_plot_data, aes(x = mean_acc, y = Script, fill = mean_acc)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = sprintf("%.2f (n=%d)", mean_acc, n_languages)), hjust = -0.1, size = 3.5) +
+  scale_fill_viridis_c(option = "magma", direction = -1) +
+  scale_x_continuous(limits = c(0, 1.0), expand = expansion(mult = c(0, 0.15))) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14)) +
+  labs(
+    title = "Accuracy Disparity Across Writing Scripts",
+    subtitle = "Scripts with at least 2 evaluated languages",
+    x = "Mean Accuracy",
+    y = "Script Code"
+  )
+```
+
+```{r}
+# Boxplot: Dls_Level vs Accuracy faceted by Model
+df_merged %>%
+  filter(!is.na(Dls_Level)) %>%
+  ggplot(aes(x = Dls_Level, y = accuracy, fill = Dls_Level)) +
+  geom_boxplot(outlier.alpha = 0.2, alpha = 0.7) +
+  facet_wrap(~ model) +
+  scale_fill_brewer(palette = "Spectral") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  labs(
+    title = "Accuracy Distribution Across Digital Language Support Levels",
+    x = "Digital Language Support (Dls Level)",
+    y = "Accuracy"
+  )
+```
+
+## 11. English Error Analysis: 5 Random Mistakes per Task
+
+Reading the per-item logs for `eng_Latn` / `mistral-small-3.2` (one file per task in `eng/`) to inspect where the model actually fails.
+
+```{r}
+task_order <- c("spelling", "inverse_spelling", "contains_character", "contains_word",
+                "orthographic_similarity", "character_insertion", "word_insertion",
+                "character_deletion", "word_deletion", "character_substitution",
+                "word_substitution", "character_swapping", "word_swapping")
+
+logs <- list.files("eng", pattern = "result_eng_Latn_.*_mistral-small-3\\.2\\.csv$",
+                   full.names = TRUE) |> 
+  map_dfr(~ read_csv(.x, show_col_types = FALSE))
+
+set.seed(42)
+mistakes <- logs |> 
+  # real mistakes, not API errors
+  filter(is_correct == 0, is_api_error == 0) |>
+  group_by(task) |> 
+  slice_sample(n = 5) |> 
+  ungroup() |> 
+  mutate(task = factor(task, levels = task_order)) |> 
+  arrange(task) |> 
+  select(task, input = input_key, expected, model_output)
+
+write_csv(mistakes, "english_mistral_mistakes.csv")
+print(mistakes, n = nrow(mistakes))
+```
+
+## 12. English Error Diagnosis: model mistake vs. scoring mistake
+
+The prompts sent to the model are not stored in the log files, only the task parameters in `input_key`. So each task's rule is worked out from the `input_key` -\> `expected` pairs. One alternative reading of the rules (counting positions from 0) is tested against what the model actually wrote in 12.5.
+
+```{r}
+library(tidyverse); library(jsonlite)
+
+logs <- list.files("eng", pattern = "result_eng_Latn_.*_mistral-small-3\\.2\\.csv$",
+                   full.names = TRUE) |>
+  map_dfr(~ read_csv(.x, show_col_types = FALSE)) |>
+  filter(is_api_error == 0)          # drop API errors
+
+# strip one or more layers of wrapping quotes. is_correct already tolerates straight double
+# quotes, but not curly or single quotes, so this helper is more forgiving than is_correct
+strip_q <- function(s) {
+  s <- str_trim(replace_na(s, ""))
+  repeat {
+    n <- nchar(s)
+    k <- which(n >= 2 &
+               str_sub(s, 1, 1) %in% c('"', '“', '‘', "'") &
+               str_sub(s, n, n) %in% c('"', '”', '’', "'"))
+    if (!length(k)) break
+    s[k] <- str_trim(str_sub(s[k], 2, nchar(s[k]) - 1))
+  }
+  s
+}
+# punctuation/case-insensitive comparison
+loose <- function(s) {
+  strip_q(s) |> str_replace_all("[“”]", '"') |>
+    str_replace_all("[‘’]", "'") |>
+    str_replace_all("[^\\w\\s]", "") |> str_squish() |> str_to_lower()
+}
+# helpers to pull fields out of the input_key JSON
+kv <- function(x, f) map_chr(x, ~{v <- fromJSON(.x)[[f]]; if (is.null(v)) NA_character_ else as.character(v)})
+kn <- function(x, f) map_dbl(x, ~{v <- fromJSON(.x)[[f]]; if (is.null(v)) NA_real_  else as.numeric(v)})
+```
+
+### 12.1 How much of the gap is scoring rather than the model?
+
+Both comparisons are applied only to the four `word_` tasks. In the other tasks spaces and punctuation are part of the answer itself (e.g. `spelling` must output the spaces, and a word like `I'm` contains an apostrophe), so ignoring them would count real mistakes as correct.
+
+```{r}
+scoring_gap <- logs |>
+  group_by(task) |>
+  summarise(
+    n                = n(),
+    official_acc     = mean(is_correct),
+    if_ws_ignored    = if (!str_starts(first(task), "word_")) NA_real_
+                       else mean(str_squish(strip_q(model_output)) == str_squish(strip_q(expected))),
+    if_punct_ignored = if (!str_starts(first(task), "word_")) NA_real_
+                       else mean(loose(model_output) == loose(expected)),
+    .groups = "drop"
+  ) |>
+  mutate(recoverable_pp = round(100 * (if_punct_ignored - official_acc), 1)) |>
+  arrange(desc(recoverable_pp))
+print(scoring_gap, n = Inf)
+```
+
+### 12.2 The double-space issue in `expected` (word tasks)
+
+The story texts were flattened from several lines into one, leaving two spaces wherever a line break used to be ("The Hungry Frog␣␣“Take a break…"). The `expected` answers collapse these to one space, so when Mistral copies the spacing of its input it is scored wrong. Not every double space in (a) comes from the input, though: in `word_deletion` Mistral sometimes leaves two spaces where it removed a word ("out from␣␣the bushes" after deleting "behind"). Three checks below.
+
+```{r}
+# (a) rows scored wrong that become identical to `expected` once spacing is squeezed
+ws_only <- logs |>
+  filter(str_starts(task, "word_"), is_correct == 0,
+         str_squish(strip_q(model_output)) == str_squish(strip_q(expected)),
+         strip_q(model_output) != strip_q(expected))   # exclude quote-only diffs
+
+ws_only |> count(task, name = "scored_wrong_on_spacing_alone") |> print()
+cat("total:", nrow(ws_only), "rows\n")
+
+ws_only |> slice_head(n = 2) |>
+  transmute(task, expected = strip_q(expected), model_output = strip_q(model_output)) |>
+  print()
+```
+
+```{r}
+# (b) the double space never appears in expected, but often appears in model_output
+logs |>
+  filter(str_starts(task, "word_")) |>
+  group_by(task) |>
+  summarise(expected_with_double_space = sum(str_detect(expected, "  ")),
+            model_output_with_double_space = sum(str_detect(strip_q(model_output), "  ")),
+            .groups = "drop") |>
+  print()
+```
+
+```{r}
+# (c) input_len proves the extra space was in the INPUT, not invented by the model.
+#     `input_len` is the character count of the passage actually sent to the model.
+#     For word_substitution where nchar(old_word) == nchar(new_word) the edit preserves
+#     length, so a faithful expected answer must satisfy  input_len == nchar(expected).
+logs |>
+  filter(task == "word_substitution",
+         nchar(kv(input_key, "old_word")) == nchar(kv(input_key, "new_word"))) |>
+  mutate(model_has_double_space = str_detect(strip_q(model_output), "  "),
+         len_gap = input_len - nchar(expected)) |>
+  count(model_has_double_space, len_gap) |>
+  print()
+```
+
+Reading (c): when the model emits no double space the gap is 0 (392 rows) - `expected` matches the passage length. Whenever the model does emit a double space the gap is never 0, but 1 or 2 - `expected` is exactly as many characters short as the spaces that were collapsed. The 55 rows with gap 1 and no double space are cases where the model collapsed the spacing too.
+
+### 12.3 Word length matters
+
+A defective prompt would fail uniformly. Accuracy instead decays monotonically with word length in every character task — `character_deletion` is 99.6% on 2-3 letter words and 44% on 9+ letter words under the identical prompt.
+
+```{r}
+logs |>
+  filter(str_starts(task, "character_")) |>
+  mutate(len = nchar(kv(input_key, "word")),
+         bin = cut(len, c(0, 3, 5, 8, Inf), labels = c("2-3", "4-5", "6-8", "9+"))) |>
+  group_by(task, bin) |>
+  summarise(acc = mean(is_correct), .groups = "drop") |>
+  pivot_wider(names_from = bin, values_from = acc, id_cols = task) |>
+  print()
+```
+
+### 12.4 Position
+
+`character_insertion` is 8x more accurate when the anchor is the **last** character than when it is in the middle, i.e. exactly when "append to the end" happens to be the right answer.
+
+```{r}
+logs |>
+  filter(task == "character_insertion") |>
+  mutate(w = kv(input_key, "word"), a = kv(input_key, "after_char"),
+         pos = map2_int(w, a, ~{i <- str_locate(.x, fixed(.y))[, 1]; if (is.na(i)) NA_integer_ else as.integer(i)})) |>
+  filter(!is.na(pos)) |>
+  mutate(anchor = case_when(pos == nchar(w) ~ "LAST  (append == correct)",
+                            pos == 1        ~ "FIRST",
+                            TRUE            ~ "MEDIAL")) |>
+  group_by(anchor) |>
+  summarise(acc = mean(is_correct), n = n(), .groups = "drop") |>
+  print()
+
+# and the corresponding failure signature: the char lands at the end of the word
+logs |>
+  filter(task == "character_insertion", is_correct == 0) |>
+  mutate(appended = strip_q(model_output) == paste0(kv(input_key, "word"),
+                                                    kv(input_key, "insert_char"))) |>
+  summarise(errors = n(), appended_at_end = sum(appended),
+            pct = 100 * mean(appended)) |> print()
+```
+
+### 12.5 Is the model counting positions from 0 instead of 1?
+
+If the instruction never said whether the first letter is position 1 or position 0, the wrong answers would cluster on the "count from 0" version. Only 95 of 1,881 do, so that is not the explanation.
+
+```{r}
+swap_chr <- function(w, i, j) { v <- str_split_1(w, ""); tmp <- v[i]; v[i] <- v[j]; v[j] <- tmp; paste0(v, collapse = "") }
+
+logs |>
+  filter(task == "character_swapping", is_correct == 0) |>
+  mutate(w = kv(input_key, "word"), p1 = kn(input_key, "pos1"), p2 = kn(input_key, "pos2"),
+         zero_indexed = map_chr(seq_len(n()), ~{
+           if (max(p1[.x], p2[.x]) + 1 > nchar(w[.x])) NA_character_
+           else swap_chr(w[.x], p1[.x] + 1, p2[.x] + 1)})) |>
+  summarise(errors = n(),
+            matches_0_indexed = sum(strip_q(model_output) == zero_indexed, na.rm = TRUE),
+            unchanged         = sum(strip_q(model_output) == w),
+            same_letters_wrong_order = sum(map2_lgl(strip_q(model_output), expected,
+                                    ~identical(sort(str_split_1(.x, "")), sort(str_split_1(.y, "")))))) |>
+  print()
+```
+
+`same_letters_wrong_order` counts answers holding exactly the right characters in the wrong order: the model retrieves the letters but cannot place them. This count includes the `unchanged` rows (the original word also has the right letters), so the two columns overlap.
+
+### 12.6 Annotated mistake sample
+
+`whitespace only` and `punctuation only` apply to the `word_` tasks only (see 12.1). They are not labelled as scoring mistakes, because the difference can come from either side: most double spaces are copied from the input, but some are left by the model where it deleted a word (see 12.2).
+
+```{r}
+set.seed(42)
+diagnosed <- logs |>
+  filter(is_correct == 0) |>
+  mutate(m = strip_q(model_output), e = strip_q(expected),
+         word_task = str_starts(task, "word_"),
+         # order matters: loose() also ignores spaces, so the whitespace check must come first
+         diagnosis = case_when(
+    word_task & m != e & str_squish(m) == str_squish(e)                      ~ "whitespace only",
+    word_task & loose(model_output) == loose(expected)                       ~ "punctuation only",
+    m == kv(input_key, "word")                                               ~ "MODEL: no edit performed",
+    TRUE                                                                     ~ "MODEL: wrong edit"
+  )) |>
+  group_by(task) |> slice_sample(n = 5) |> ungroup() |>
+  select(task, input = input_key, expected, model_output, diagnosis)
+
+write_csv(diagnosed, "english_mistral_mistakes_diagnosed.csv")
+print(diagnosed, n = Inf)
+```
